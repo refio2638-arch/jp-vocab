@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-jp: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  --color-paper: #f3efe6;
+  --color-ink: #1c1917;
+  --color-card: #fffcf7;
+  --color-line: #e7e0d4;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
