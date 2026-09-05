@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { EnLevelPicker } from "@/components/EnLevelPicker";
 import { LevelPicker } from "@/components/LevelPicker";
 import { SiteHeader } from "@/components/SiteHeader";
 import { StudyScopeSelect } from "@/components/StudyScopeSelect";
@@ -17,7 +18,6 @@ export default function HomePage() {
   const setLang = useVocabStore((state) => state.setLang);
   const todayByLang = useVocabStore((state) => state.todayByLang);
   const enabledLevels = useVocabStore((state) => state.enabledLevels);
-  const wordCount = useVocabStore((state) => state.words.length);
   const lifetimeByLang = useVocabStore((state) => state.lifetimeByLang);
   const enabledCount = enabledBankCount(enabledLevels);
   const total = totalBankCount();
@@ -66,7 +66,8 @@ export default function HomePage() {
             <p className="mt-2 text-sm text-stone-500">今日已刷</p>
             <p className="mt-1 text-4xl font-semibold tabular-nums text-ink">{enToday}</p>
             <p className="mt-2 text-xs text-stone-400">
-              CET4 {EN_LEVEL_COUNTS.CET4} 词 · 累计 {lifetimeByLang.en} 次
+              CET4 {EN_LEVEL_COUNTS.CET4} · CET6 {EN_LEVEL_COUNTS.CET6} · 考研 {EN_LEVEL_COUNTS.KAOYAN} ·
+              累计 {lifetimeByLang.en} 次
             </p>
           </button>
         </div>
@@ -76,8 +77,8 @@ export default function HomePage() {
             <LevelPicker />
           </div>
         ) : (
-          <div className="mt-6 rounded-3xl border border-line bg-card px-5 py-5 text-sm text-stone-500">
-            英语词库：CET4 {EN_LEVEL_COUNTS.CET4} 词（已加载 {wordCount}）
+          <div className="mt-6 rounded-3xl border border-line bg-card px-5 py-5">
+            <EnLevelPicker />
           </div>
         )}
         <div className="mt-4">

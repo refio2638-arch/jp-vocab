@@ -2,14 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { GlossText } from "@/components/GlossText";
+import { EnLevelPicker } from "@/components/EnLevelPicker";
 import { LevelPicker } from "@/components/LevelPicker";
 import { SiteHeader } from "@/components/SiteHeader";
 import { WordEditor } from "@/components/WordEditor";
-import { EN_LEVEL_COUNTS } from "@/data/en";
 import { masteryLabel, masteryTone } from "@/lib/mastery";
 import { downloadJson, parseImportPayload, toExportPayload } from "@/lib/parse";
 import { useVocabStore } from "@/lib/store";
 import {
+  EN_LEVEL_LABELS,
   EN_LEVELS,
   JLPT_LEVELS,
   displayMeaning,
@@ -174,8 +175,8 @@ export default function WordsPage() {
             <LevelPicker />
           </div>
         ) : (
-          <div className="mt-4 rounded-3xl border border-line bg-card p-5 text-sm text-stone-500">
-            英语词库 CET4 {EN_LEVEL_COUNTS.CET4} 词
+          <div className="mt-4 rounded-3xl border border-line bg-card p-5">
+            <EnLevelPicker />
           </div>
         )}
 
@@ -208,7 +209,7 @@ export default function WordsPage() {
               <option value="all">全部级别</option>
               {EN_LEVELS.map((level) => (
                 <option key={level} value={level}>
-                  {level}
+                  {EN_LEVEL_LABELS[level]}
                 </option>
               ))}
             </select>

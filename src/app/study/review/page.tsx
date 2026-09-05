@@ -9,7 +9,7 @@ import { SentenceBox } from "@/components/SentenceBox";
 import { speak } from "@/lib/speak";
 import { getSpeechStatus } from "@/lib/speech";
 import { useVocabStore } from "@/lib/store";
-import { exampleEnOf, exampleJpOf, formatLevels, headText, wordLang, type Grade, type Word } from "@/lib/types";
+import { exampleEnOf, exampleJpOf, formatEnLevels, formatLevels, headText, wordLang, type Grade, type Word } from "@/lib/types";
 
 export default function ReviewPage() {
   const words = useVocabStore((state) => state.words);
@@ -20,6 +20,7 @@ export default function ReviewPage() {
   const addSentence = useVocabStore((state) => state.addSentence);
   const pickNext = useVocabStore((state) => state.pickNext);
   const enabledLevels = useVocabStore((state) => state.enabledLevels);
+  const enabledEnLevels = useVocabStore((state) => state.enabledEnLevels);
   const studyScope = useVocabStore((state) => state.studyScope);
   const lang = useVocabStore((state) => state.lang);
 
@@ -78,7 +79,7 @@ export default function ReviewPage() {
     setFlipped(false);
     setPendingGrade(null);
     setWord((current) => pickNext(current?.id ?? null));
-  }, [enabledLevels, lang, pickNext, studyScope, words]);
+  }, [enabledEnLevels, enabledLevels, lang, pickNext, studyScope, words]);
 
   useEffect(() => {
     if (!word || !autoSpeak) {
@@ -234,7 +235,7 @@ export default function ReviewPage() {
         <ReviewSettings />
       </header>
       <p className="mx-auto w-full max-w-lg shrink-0 px-4 text-center text-xs tabular-nums text-stone-400">
-        {lang === "en" ? "CET4" : formatLevels(enabledLevels)}
+        {lang === "en" ? formatEnLevels(enabledEnLevels) : formatLevels(enabledLevels)}
         {` · 本次 ${session.reviewed} · 认识率 ${session.reviewed === 0 ? "—" : `${knowRate}%`}`}
       </p>
 

@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useVocabStore } from "@/lib/store";
-import { EN_LEVELS, JLPT_LEVELS, isEnLevel, isJlptLevel, wordLang, type EnLevel, type JlptLevel, type Word } from "@/lib/types";
+import { EN_LEVEL_LABELS, EN_LEVELS, JLPT_LEVELS, isEnLevel, isJlptLevel, wordLang, type EnLevel, type JlptLevel, type Word } from "@/lib/types";
 
 type WordEditorProps = {
   initial?: Word | null;
@@ -155,7 +155,7 @@ export function WordEditor({ initial, existingIds, onSave, onCancel }: WordEdito
             >
               {EN_LEVELS.map((level) => (
                 <option key={level} value={level}>
-                  {level}
+                  {EN_LEVEL_LABELS[level]}
                 </option>
               ))}
             </select>

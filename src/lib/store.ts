@@ -6,10 +6,13 @@ import { BANK_VERSION } from "@/data/jlpt";
 import {
   parseAppLang,
   parseEnAccent,
+  parseEnabledEnLevels,
   readAppLang,
   readEnAccent,
+  readEnabledEnLevels,
   writeAppLang,
   writeEnAccent,
+  writeEnabledEnLevels,
 } from "@/lib/langSettings";
 import {
   parseEnabledLevels,
@@ -31,6 +34,7 @@ import { configureEnAccent, configureSpeak } from "@/lib/speak";
 import type {
   AppLang,
   EnAccent,
+  EnLevel,
   Grade,
   JlptLevel,
   Progress,
@@ -39,8 +43,8 @@ import type {
   StudyScope,
   Word,
 } from "@/lib/types";
-import { sortLevels, todayKey, wordLang } from "@/lib/types";
-import { loadEnglishLevels, loadLevel } from "@/lib/wordBank";
+import { isEnLevel, sortEnLevels, sortLevels, todayKey, wordLang } from "@/lib/types";
+import { loadEnglishWords, loadLevel } from "@/lib/wordBank";
 
 type TodayBucket = { date: string; count: number };
 
@@ -51,7 +55,9 @@ export type VocabState = {
   customWords: Word[];
   bankByLevel: Partial<Record<JlptLevel, Word[]>>;
   enBank: Word[];
+  enBankByLevel: Partial<Record<EnLevel, Word[]>>;
   enabledLevels: JlptLevel[];
+  enabledEnLevels: EnLevel[];
   studyScope: StudyScope;
   bankReady: boolean;
   progress: Record<string, Progress>;
@@ -72,8 +78,10 @@ export type VocabState = {
   setAutoSpeak: (value: boolean) => void;
   setSpeakEngine: (value: SpeakEngine) => void;
   setEnabledLevels: (levels: JlptLevel[]) => Promise<void>;
+  setEnabledEnLevels: (levels: EnLevel[]) => Promise<void>;
   setStudyScope: (scope: StudyScope) => void;
   toggleLevel: (level: JlptLevel) => Promise<void>;
+  toggleEnLevel: (level: EnLevel) => Promise<void>;
   ensureBank: () => Promise<void>;
   applyGrade: (wordId: string, grade: Grade) => void;
   addSentence: (wordId: string, sentence: string) => boolean;
@@ -117,7 +125,8 @@ function collectWords(
   lang: AppLang,
   enabledLevels: JlptLevel[],
   bankByLevel: Partial<Record<JlptLevel, Word[]>>,
-  enBank: Word[],
+  enabledEnLevels: EnLevel[],
+  enBankByLevel: Partial<Record<EnLevel, Word[]>>,
   customWords: Word[],
 ): Word[] {
   const map = new Map<string, Word>();
@@ -128,12 +137,17 @@ function collectWords(
     if (lang === "ja" && word.jlpt && !enabledLevels.includes(word.jlpt)) {
       continue;
     }
+    if (lang === "en" && word.level && isEnLevel(word.level) && !enabledEnLevels.includes(word.level)) {
+      continue;
+    }
     map.set(word.id, word);
   }
   if (lang === "en") {
-    for (const word of enBank) {
-      const stored = map.get(word.id);
-      map.set(word.id, stored ? overlayExampleFields(stored, word) : word);
+    for (const level of enabledEnLevels) {
+      for (const word of enBankByLevel[level] ?? []) {
+        const stored = map.get(word.id);
+        map.set(word.id, stored ? overlayExampleFields(stored, word) : word);
+      }
     }
     return Array.from(map.values());
   }
@@ -146,10 +160,14 @@ function collectWords(
   return Array.from(map.values());
 }
 
+function flattenEnBank(enBankByLevel: Partial<Record<EnLevel, Word[]>>): Word[] {
+  return Object.values(enBankByLevel).flatMap((list) => list ?? []);
+}
+
 function overlayCustomFromBank(
   customWords: Word[],
   bankByLevel: Partial<Record<JlptLevel, Word[]>>,
-  enBank: Word[],
+  enBankByLevel: Partial<Record<EnLevel, Word[]>>,
 ): Word[] {
   const byId = new Map<string, Word>();
   for (const list of Object.values(bankByLevel)) {
@@ -157,7 +175,7 @@ function overlayCustomFromBank(
       byId.set(word.id, word);
     }
   }
-  for (const word of enBank) {
+  for (const word of flattenEnBank(enBankByLevel)) {
     byId.set(word.id, word);
   }
   if (byId.size === 0) {
@@ -170,7 +188,7 @@ function overlayCustomFromBank(
 }
 
 function isCachedBankId(id: string): boolean {
-  return /^N[1-5]-/.test(id) || /^en-cet4-/.test(id);
+  return /^N[1-5]-/.test(id) || /^en-(cet4|cet6|kaoyan)-/.test(id);
 }
 
 function migrateCustomWords(saved: Partial<VocabState> | undefined): Word[] {
@@ -179,22 +197,29 @@ function migrateCustomWords(saved: Partial<VocabState> | undefined): Word[] {
 }
 
 function withWords(
-  state: Pick<VocabState, "lang" | "enabledLevels" | "bankByLevel" | "enBank" | "customWords">,
+  state: Pick<
+    VocabState,
+    "lang" | "enabledLevels" | "enabledEnLevels" | "bankByLevel" | "enBankByLevel" | "customWords"
+  >,
   extra: Partial<VocabState> = {},
 ): Partial<VocabState> {
   const lang = extra.lang ?? state.lang;
   const enabledLevels = extra.enabledLevels ?? state.enabledLevels;
+  const enabledEnLevels = extra.enabledEnLevels ?? state.enabledEnLevels;
   const bankByLevel = extra.bankByLevel ?? state.bankByLevel;
-  const enBank = extra.enBank ?? state.enBank;
+  const enBankByLevel = extra.enBankByLevel ?? state.enBankByLevel;
   const customWords = extra.customWords ?? state.customWords;
+  const enBank = flattenEnBank(enBankByLevel);
   return {
     ...extra,
     lang,
     enabledLevels,
+    enabledEnLevels,
     bankByLevel,
+    enBankByLevel,
     enBank,
     customWords,
-    words: collectWords(lang, enabledLevels, bankByLevel, enBank, customWords),
+    words: collectWords(lang, enabledLevels, bankByLevel, enabledEnLevels, enBankByLevel, customWords),
   };
 }
 
@@ -207,7 +232,9 @@ export const useVocabStore = create<VocabState>()(
       customWords: [],
       bankByLevel: {},
       enBank: [],
+      enBankByLevel: {},
       enabledLevels: ["N5"],
+      enabledEnLevels: ["CET4"],
       studyScope: "all",
       bankReady: false,
       progress: {},
@@ -232,7 +259,7 @@ export const useVocabStore = create<VocabState>()(
         const today = currentToday(state.todayByLang[lang]);
         const bankAlready =
           lang === "en"
-            ? state.enBank.length > 0
+            ? state.enabledEnLevels.every((level) => Boolean(state.enBankByLevel[level]))
             : state.enabledLevels.every((level) => Boolean(state.bankByLevel[level]));
         set({
           ...withWords(state, { lang, bankReady: bankAlready }),
@@ -263,6 +290,15 @@ export const useVocabStore = create<VocabState>()(
           await get().ensureBank();
         }
       },
+      setEnabledEnLevels: async (levels) => {
+        const enabledEnLevels = sortEnLevels(levels.length > 0 ? levels : ["CET4"]);
+        writeEnabledEnLevels(enabledEnLevels);
+        const missing = enabledEnLevels.some((level) => !get().enBankByLevel[level]);
+        set(withWords(get(), { enabledEnLevels, bankReady: get().lang === "en" && missing ? false : get().bankReady }));
+        if (get().lang === "en") {
+          await get().ensureBank();
+        }
+      },
       setStudyScope: (scope) => {
         writeStudyScope(scope);
         set({ studyScope: scope });
@@ -274,14 +310,28 @@ export const useVocabStore = create<VocabState>()(
           : [...current, level];
         await get().setEnabledLevels(next);
       },
+      toggleEnLevel: async (level) => {
+        const current = get().enabledEnLevels;
+        const next = current.includes(level)
+          ? current.filter((item) => item !== level)
+          : [...current, level];
+        await get().setEnabledEnLevels(next);
+      },
       ensureBank: async () => {
         const state = get();
         if (state.lang === "en") {
-          const enBank = state.enBank.length > 0 ? state.enBank : await loadEnglishLevels();
-          const customWords = overlayCustomFromBank(state.customWords, state.bankByLevel, enBank);
+          const enBankByLevel = { ...state.enBankByLevel };
+          await Promise.all(
+            state.enabledEnLevels.map(async (level) => {
+              if (!enBankByLevel[level]) {
+                enBankByLevel[level] = await loadEnglishWords([level]);
+              }
+            }),
+          );
+          const customWords = overlayCustomFromBank(state.customWords, state.bankByLevel, enBankByLevel);
           set(
             withWords(get(), {
-              enBank,
+              enBankByLevel,
               customWords,
               bankReady: true,
             }),
@@ -297,7 +347,7 @@ export const useVocabStore = create<VocabState>()(
             }
           }),
         );
-        const customWords = overlayCustomFromBank(state.customWords, nextBank, state.enBank);
+        const customWords = overlayCustomFromBank(state.customWords, nextBank, state.enBankByLevel);
         set(
           withWords(get(), {
             bankByLevel: nextBank,
@@ -395,6 +445,7 @@ export const useVocabStore = create<VocabState>()(
         enAccent: state.enAccent,
         customWords: state.customWords.filter((word) => !isCachedBankId(word.id)),
         enabledLevels: state.enabledLevels,
+        enabledEnLevels: state.enabledEnLevels,
         studyScope: state.studyScope,
         autoSpeak: state.autoSpeak,
         speakEngine: state.speakEngine,
@@ -407,6 +458,7 @@ export const useVocabStore = create<VocabState>()(
         const today = todayKey();
         const lang = parseAppLang(saved?.lang ?? readAppLang());
         const enabledLevels = parseEnabledLevels(saved?.enabledLevels ?? readEnabledLevels());
+        const enabledEnLevels = parseEnabledEnLevels(saved?.enabledEnLevels ?? readEnabledEnLevels());
         const studyScope = parseStudyScope(saved?.studyScope ?? readStudyScope());
         const enAccent = parseEnAccent(saved?.enAccent ?? readEnAccent());
 
@@ -441,7 +493,9 @@ export const useVocabStore = create<VocabState>()(
           customWords: migrateCustomWords(saved),
           bankByLevel: {},
           enBank: [],
+          enBankByLevel: {},
           enabledLevels,
+          enabledEnLevels,
           studyScope,
           bankReady: false,
           progress: readProgress(lang),
@@ -463,6 +517,7 @@ export const useVocabStore = create<VocabState>()(
           writeAppLang(state.lang);
           writeEnAccent(state.enAccent);
           writeEnabledLevels(state.enabledLevels);
+          writeEnabledEnLevels(state.enabledEnLevels);
           writeStudyScope(state.studyScope);
           configureSpeak(state.speakEngine === "system" ? "system" : "neural");
           configureEnAccent(state.enAccent);

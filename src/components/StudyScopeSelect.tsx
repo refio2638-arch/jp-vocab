@@ -13,7 +13,7 @@ export function StudyScopeSelect() {
   const lang = useVocabStore((state) => state.lang);
   const studyScope = useVocabStore((state) => state.studyScope);
   const setStudyScope = useVocabStore((state) => state.setStudyScope);
-  const allLabel = lang === "en" ? "全部 CET4" : "全部已选级别";
+  const allLabel = lang === "en" ? "全部已选英语级别" : "全部已选级别";
 
   return (
     <label className="flex flex-col gap-1 text-sm text-stone-500">

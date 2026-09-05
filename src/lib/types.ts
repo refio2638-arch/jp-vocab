@@ -6,9 +6,15 @@ export const APP_LANGS = ["ja", "en"] as const;
 
 export type AppLang = (typeof APP_LANGS)[number];
 
-export const EN_LEVELS = ["CET4"] as const;
+export const EN_LEVELS = ["CET4", "CET6", "KAOYAN"] as const;
 
 export type EnLevel = (typeof EN_LEVELS)[number];
+
+export const EN_LEVEL_LABELS: Record<EnLevel, string> = {
+  CET4: "CET4",
+  CET6: "CET6",
+  KAOYAN: "考研",
+};
 
 export type EnAccent = "en-US" | "en-GB";
 
@@ -167,4 +173,13 @@ export function sortLevels(levels: JlptLevel[]): JlptLevel[] {
 export function formatLevels(levels: JlptLevel[]): string {
   const sorted = sortLevels(levels);
   return sorted.length > 0 ? sorted.join("+") : "—";
+}
+
+export function sortEnLevels(levels: EnLevel[]): EnLevel[] {
+  return EN_LEVELS.filter((level) => levels.includes(level));
+}
+
+export function formatEnLevels(levels: EnLevel[]): string {
+  const sorted = sortEnLevels(levels);
+  return sorted.length > 0 ? sorted.map((level) => EN_LEVEL_LABELS[level]).join("+") : "—";
 }

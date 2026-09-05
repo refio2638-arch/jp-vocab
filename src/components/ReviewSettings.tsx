@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { EnLevelPicker } from "@/components/EnLevelPicker";
 import { LangToggle } from "@/components/LangToggle";
 import { VoiceModeToggle } from "@/components/VoiceModeToggle";
 import { useVocabStore } from "@/lib/store";
 
 export function ReviewSettings() {
+  const lang = useVocabStore((state) => state.lang);
   const autoSpeak = useVocabStore((state) => state.autoSpeak);
   const setAutoSpeak = useVocabStore((state) => state.setAutoSpeak);
   const [open, setOpen] = useState(false);
@@ -59,7 +61,7 @@ export function ReviewSettings() {
             id={panelId}
             role="dialog"
             aria-label="复习设置"
-            className="fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto rounded-t-3xl border border-line bg-card px-5 py-5 shadow-lg md:absolute md:inset-x-auto md:bottom-auto md:right-0 md:top-12 md:w-80 md:max-h-[min(80dvh,28rem)] md:rounded-3xl"
+            className="fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto rounded-t-3xl border border-line bg-card px-5 py-5 shadow-lg md:absolute md:inset-x-auto md:bottom-auto md:right-0 md:top-12 md:w-80 md:max-h-[min(80dvh,32rem)] md:rounded-3xl"
           >
             <div className="mb-4 flex items-center justify-between md:hidden">
               <p className="text-sm font-medium text-ink">设置</p>
@@ -76,6 +78,7 @@ export function ReviewSettings() {
                 <p className="mb-2 text-xs text-stone-400">语言</p>
                 <LangToggle />
               </div>
+              {lang === "en" ? <EnLevelPicker /> : null}
               <label className="flex min-h-10 items-center gap-2 text-sm text-stone-600">
                 <input
                   type="checkbox"
