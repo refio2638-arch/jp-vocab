@@ -1,48 +1,59 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GradeButtons } from "@/components/GradeButtons";
 import { ReviewCard } from "@/components/ReviewCard";
+import { ReviewSettings } from "@/components/ReviewSettings";
 import { SentenceBox } from "@/components/SentenceBox";
-import { VoiceModeToggle } from "@/components/VoiceModeToggle";
-import { speakJa } from "@/lib/speak";
+import { speak } from "@/lib/speak";
 import { getSpeechStatus } from "@/lib/speech";
 import { useVocabStore } from "@/lib/store";
-import { exampleJpOf, formatLevels, type Grade, type Word } from "@/lib/types";
+import { exampleEnOf, exampleJpOf, formatLevels, headText, wordLang, type Grade, type Word } from "@/lib/types";
 
 export default function ReviewPage() {
   const words = useVocabStore((state) => state.words);
   const progress = useVocabStore((state) => state.progress);
   const session = useVocabStore((state) => state.session);
   const autoSpeak = useVocabStore((state) => state.autoSpeak);
-  const setAutoSpeak = useVocabStore((state) => state.setAutoSpeak);
   const applyGrade = useVocabStore((state) => state.applyGrade);
   const addSentence = useVocabStore((state) => state.addSentence);
   const pickNext = useVocabStore((state) => state.pickNext);
   const enabledLevels = useVocabStore((state) => state.enabledLevels);
   const studyScope = useVocabStore((state) => state.studyScope);
+  const lang = useVocabStore((state) => state.lang);
 
-  const [word, setWord] = useState<Word | null>(null);
+  const [word, setWord] = useState<Word | null>(() => useVocabStore.getState().pickNext(null));
   const [flipped, setFlipped] = useState(false);
+  const [pendingGrade, setPendingGrade] = useState<Grade | null>(null);
+  const [gradeLocked, setGradeLocked] = useState(false);
+  const gradeLockTimer = useRef<number | null>(null);
   const [speechHint, setSpeechHint] = useState<string | null>(
     () => getSpeechStatus().message,
   );
 
-  const speakText = word ? word.kana || word.kanji : "";
-  const exampleText = word ? exampleJpOf(word) : "";
+  const speakLang = word ? wordLang(word) : lang;
+  const speakText = word ? (speakLang === "en" ? headText(word) : word.kana || word.kanji) : "";
+  const exampleText = word
+    ? speakLang === "en"
+      ? exampleEnOf(word)
+      : exampleJpOf(word)
+    : "";
 
-  const speakPhrase = useCallback((text: string) => {
-    if (!text) {
-      return;
-    }
-    void speakJa(text).catch(() => {
-      const status = getSpeechStatus();
-      if (status.message) {
-        setSpeechHint(status.message);
+  const speakPhrase = useCallback(
+    (text: string) => {
+      if (!text) {
+        return;
       }
-    });
-  }, []);
+      void speak(text, speakLang).catch(() => {
+        const status = getSpeechStatus();
+        if (status.message) {
+          setSpeechHint(status.message);
+        }
+      });
+    },
+    [speakLang],
+  );
 
   const speakCurrent = useCallback(() => {
     speakPhrase(speakText);
@@ -56,49 +67,93 @@ export default function ReviewPage() {
     const q = new URLSearchParams(window.location.search).get("word")?.trim();
     if (q) {
       const found = words.find(
-        (item) => item.kanji === q || item.kana === q || item.id === q,
+        (item) =>
+          item.kanji === q || item.kana === q || item.word === q || item.id === q || headText(item) === q,
       );
       if (found) {
         setWord(found);
         return;
       }
     }
+    setFlipped(false);
+    setPendingGrade(null);
     setWord((current) => pickNext(current?.id ?? null));
-  }, [enabledLevels, pickNext, studyScope, words]);
+  }, [enabledLevels, lang, pickNext, studyScope, words]);
 
   useEffect(() => {
     if (!word || !autoSpeak) {
       return;
     }
-    void speakJa(word.kana || word.kanji);
+    const nextLang = wordLang(word);
+    void speak(nextLang === "en" ? headText(word) : word.kana || word.kanji, nextLang);
   }, [autoSpeak, word]);
 
   const revealBack = useCallback(() => {
     if (!flipped && autoSpeak && exampleText) {
-      void speakJa(exampleText);
+      void speak(exampleText, speakLang);
     }
     setFlipped(true);
-  }, [autoSpeak, exampleText, flipped]);
+  }, [autoSpeak, exampleText, flipped, speakLang]);
 
   function handleCardFlip() {
     if (flipped) {
       setFlipped(false);
+      setPendingGrade(null);
       return;
     }
     revealBack();
   }
 
-  const grade = useCallback(
+  const lockGradesBriefly = useCallback(() => {
+    if (gradeLockTimer.current !== null) {
+      window.clearTimeout(gradeLockTimer.current);
+    }
+    setGradeLocked(true);
+    gradeLockTimer.current = window.setTimeout(() => {
+      setGradeLocked(false);
+      gradeLockTimer.current = null;
+    }, 200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (gradeLockTimer.current !== null) {
+        window.clearTimeout(gradeLockTimer.current);
+      }
+    };
+  }, []);
+
+  const commitGrade = useCallback(
     (value: Grade) => {
       if (!word) {
         return;
       }
       applyGrade(word.id, value);
-      const next = pickNext(word.id);
-      setWord(next);
+      setPendingGrade(null);
       setFlipped(false);
+      setWord(pickNext(word.id));
     },
     [applyGrade, pickNext, word],
+  );
+
+  const grade = useCallback(
+    (value: Grade) => {
+      if (!word || gradeLocked) {
+        return;
+      }
+      if (value === "know" && !flipped) {
+        commitGrade("know");
+        return;
+      }
+      if ((value === "fuzzy" || value === "unknown") && !flipped) {
+        setPendingGrade(value);
+        revealBack();
+        lockGradesBriefly();
+        return;
+      }
+      commitGrade(value);
+    },
+    [commitGrade, flipped, gradeLocked, lockGradesBriefly, revealBack, word],
   );
 
   useEffect(() => {
@@ -171,35 +226,20 @@ export default function ReviewPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-paper">
-      <header className="mx-auto flex w-full max-w-lg items-center justify-between px-4 py-3">
-        <Link href="/" className="text-sm text-stone-500 hover:text-ink">
+    <div className="flex min-h-screen flex-col bg-paper">
+      <header className="mx-auto flex w-full max-w-lg shrink-0 items-center justify-between px-4 py-3">
+        <Link href="/" className="text-sm text-stone-400 hover:text-ink">
           返回首页
         </Link>
-        <div className="flex items-center gap-3 text-sm tabular-nums text-stone-600">
-          <span className="font-medium text-ink">{formatLevels(enabledLevels)}</span>
-          <span>本次 {session.reviewed}</span>
-          <span>认识率 {session.reviewed === 0 ? "—" : `${knowRate}%`}</span>
-        </div>
+        <ReviewSettings />
       </header>
+      <p className="mx-auto w-full max-w-lg shrink-0 px-4 text-center text-xs tabular-nums text-stone-400">
+        {lang === "en" ? "CET4" : formatLevels(enabledLevels)}
+        {` · 本次 ${session.reviewed} · 认识率 ${session.reviewed === 0 ? "—" : `${knowRate}%`}`}
+      </p>
 
-      <main className="mx-auto w-full max-w-lg px-4 pb-10">
-        <div className="mb-3 flex flex-col items-end gap-2">
-          <label className="flex min-h-10 items-center gap-2 text-sm text-stone-500">
-            <input
-              type="checkbox"
-              checked={autoSpeak}
-              onChange={(event) => setAutoSpeak(event.target.checked)}
-              className="h-4 w-4"
-            />
-            进入卡片时朗读
-          </label>
-          <VoiceModeToggle />
-        </div>
-
-        {speechHint ? (
-          <p className="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900">{speechHint}</p>
-        ) : null}
+      <main className="flex flex-1 flex-col items-center justify-center px-4">
+        {speechHint ? <p className="mb-4 text-center text-sm text-amber-800">{speechHint}</p> : null}
 
         {word ? (
           <>
@@ -210,24 +250,31 @@ export default function ReviewPage() {
               onSpeakUnavailable={setSpeechHint}
             />
             {flipped ? (
-              <div className="mt-4">
+              <div className="mt-6 w-full max-w-lg">
                 <SentenceBox
+                  key={word.id}
                   word={word}
                   savedCount={savedCount}
                   onSave={(sentence) => addSentence(word.id, sentence)}
                 />
               </div>
             ) : null}
-            <div className="mt-5">
-              <GradeButtons onGrade={grade} />
-            </div>
           </>
         ) : (
-          <p className="rounded-3xl border border-line bg-card px-5 py-16 text-center text-stone-500">
-            {emptyHint}
-          </p>
+          <p className="text-center text-stone-400">{emptyHint}</p>
         )}
       </main>
+
+      {word ? (
+        <footer className="sticky bottom-0 mt-auto bg-paper px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="mx-auto w-full max-w-md">
+            {pendingGrade ? (
+              <p className="mb-2 text-center text-xs text-stone-400">再点一次进入下一词</p>
+            ) : null}
+            <GradeButtons disabled={gradeLocked} onGrade={grade} />
+          </div>
+        </footer>
+      ) : null}
     </div>
   );
 }

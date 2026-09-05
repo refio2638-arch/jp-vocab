@@ -2,18 +2,32 @@ export const JLPT_LEVELS = ["N5", "N4", "N3", "N2", "N1"] as const;
 
 export type JlptLevel = (typeof JLPT_LEVELS)[number];
 
+export const APP_LANGS = ["ja", "en"] as const;
+
+export type AppLang = (typeof APP_LANGS)[number];
+
+export const EN_LEVELS = ["CET4"] as const;
+
+export type EnLevel = (typeof EN_LEVELS)[number];
+
+export type EnAccent = "en-US" | "en-GB";
+
 export type Grade = "know" | "fuzzy" | "unknown";
 
 export type Word = {
   id: string;
+  lang?: AppLang;
   kanji: string;
   kana: string;
+  word?: string;
+  phonetic?: string;
   romaji?: string;
   meaning: string;
   meaningEn?: string;
   meaningZh?: string;
   pos?: string;
   jlpt?: JlptLevel;
+  level?: string;
   exampleJp?: string;
   exampleEn?: string;
   exampleZh?: string;
@@ -56,7 +70,20 @@ export type ExportPayload = {
   progress: Progress[];
 };
 
+export function wordLang(word: Word): AppLang {
+  if (word.lang === "en" || word.lang === "ja") {
+    return word.lang;
+  }
+  return word.word && !word.kana && !word.kanji ? "en" : "ja";
+}
+
 export function headText(word: Word): string {
+  if (wordLang(word) === "en") {
+    const english = word.word?.trim();
+    if (english) {
+      return english;
+    }
+  }
   const kanji = word.kanji.trim();
   return kanji.length > 0 ? kanji : word.kana;
 }
@@ -75,6 +102,14 @@ export function todayKey(date = new Date()): string {
 
 export function isJlptLevel(value: string): value is JlptLevel {
   return (JLPT_LEVELS as readonly string[]).includes(value);
+}
+
+export function isAppLang(value: string): value is AppLang {
+  return value === "ja" || value === "en";
+}
+
+export function isEnLevel(value: string): value is EnLevel {
+  return (EN_LEVELS as readonly string[]).includes(value);
 }
 
 function firstNonEmpty(...values: Array<string | undefined | null>): string {

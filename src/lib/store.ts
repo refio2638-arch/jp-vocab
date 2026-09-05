@@ -2,6 +2,15 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { BANK_VERSION } from "@/data/jlpt";
+import {
+  parseAppLang,
+  parseEnAccent,
+  readAppLang,
+  readEnAccent,
+  writeAppLang,
+  writeEnAccent,
+} from "@/lib/langSettings";
 import {
   parseEnabledLevels,
   parseStudyScope,
@@ -11,22 +20,37 @@ import {
   writeStudyScope,
 } from "@/lib/levelSettings";
 import { mergeProgressById, mergeWordsById, overlayExampleFields } from "@/lib/parse";
-import { configureSpeak } from "@/lib/speak";
+import { readProgress, writeProgress } from "@/lib/progressStorage";
 import {
   applyGradeToProgress,
   defaultProgress,
   filterStudyPool,
   selectNextWord,
 } from "@/lib/scheduler";
-import type { Grade, JlptLevel, Progress, SessionStats, SpeakEngine, StudyScope, Word } from "@/lib/types";
-import { sortLevels, todayKey } from "@/lib/types";
-import { BANK_VERSION } from "@/data/jlpt";
-import { loadLevel } from "@/lib/wordBank";
+import { configureEnAccent, configureSpeak } from "@/lib/speak";
+import type {
+  AppLang,
+  EnAccent,
+  Grade,
+  JlptLevel,
+  Progress,
+  SessionStats,
+  SpeakEngine,
+  StudyScope,
+  Word,
+} from "@/lib/types";
+import { sortLevels, todayKey, wordLang } from "@/lib/types";
+import { loadEnglishLevels, loadLevel } from "@/lib/wordBank";
+
+type TodayBucket = { date: string; count: number };
 
 export type VocabState = {
+  lang: AppLang;
+  enAccent: EnAccent;
   words: Word[];
   customWords: Word[];
   bankByLevel: Partial<Record<JlptLevel, Word[]>>;
+  enBank: Word[];
   enabledLevels: JlptLevel[];
   studyScope: StudyScope;
   bankReady: boolean;
@@ -36,10 +60,15 @@ export type VocabState = {
   todayDate: string;
   todayCount: number;
   lifetimeReviews: number;
+  todayByLang: Record<AppLang, TodayBucket>;
+  lifetimeByLang: Record<AppLang, number>;
   session: SessionStats;
+  sessionByLang: Record<AppLang, SessionStats>;
   hydrated: boolean;
   bankVersion: string;
   setHydrated: (value: boolean) => void;
+  setLang: (lang: AppLang) => Promise<void>;
+  setEnAccent: (accent: EnAccent) => void;
   setAutoSpeak: (value: boolean) => void;
   setSpeakEngine: (value: SpeakEngine) => void;
   setEnabledLevels: (levels: JlptLevel[]) => Promise<void>;
@@ -61,28 +90,52 @@ const emptySession = (): SessionStats => ({
   unknown: 0,
 });
 
-function bumpToday(
-  todayDate: string,
-  todayCount: number,
-): { todayDate: string; todayCount: number } {
+function emptyTodayByLang(date = todayKey()): Record<AppLang, TodayBucket> {
+  return {
+    ja: { date, count: 0 },
+    en: { date, count: 0 },
+  };
+}
+
+function emptyLifetimeByLang(): Record<AppLang, number> {
+  return { ja: 0, en: 0 };
+}
+
+function emptySessionByLang(): Record<AppLang, SessionStats> {
+  return { ja: emptySession(), en: emptySession() };
+}
+
+function currentToday(bucket: TodayBucket | undefined): TodayBucket {
   const today = todayKey();
-  if (todayDate !== today) {
-    return { todayDate: today, todayCount: 1 };
+  if (!bucket || bucket.date !== today) {
+    return { date: today, count: 0 };
   }
-  return { todayDate, todayCount: todayCount + 1 };
+  return bucket;
 }
 
 function collectWords(
+  lang: AppLang,
   enabledLevels: JlptLevel[],
   bankByLevel: Partial<Record<JlptLevel, Word[]>>,
+  enBank: Word[],
   customWords: Word[],
 ): Word[] {
   const map = new Map<string, Word>();
   for (const word of customWords) {
-    if (word.jlpt && !enabledLevels.includes(word.jlpt)) {
+    if (wordLang(word) !== lang) {
+      continue;
+    }
+    if (lang === "ja" && word.jlpt && !enabledLevels.includes(word.jlpt)) {
       continue;
     }
     map.set(word.id, word);
+  }
+  if (lang === "en") {
+    for (const word of enBank) {
+      const stored = map.get(word.id);
+      map.set(word.id, stored ? overlayExampleFields(stored, word) : word);
+    }
+    return Array.from(map.values());
   }
   for (const level of enabledLevels) {
     for (const word of bankByLevel[level] ?? []) {
@@ -96,12 +149,16 @@ function collectWords(
 function overlayCustomFromBank(
   customWords: Word[],
   bankByLevel: Partial<Record<JlptLevel, Word[]>>,
+  enBank: Word[],
 ): Word[] {
   const byId = new Map<string, Word>();
   for (const list of Object.values(bankByLevel)) {
     for (const word of list ?? []) {
       byId.set(word.id, word);
     }
+  }
+  for (const word of enBank) {
+    byId.set(word.id, word);
   }
   if (byId.size === 0) {
     return customWords;
@@ -113,7 +170,7 @@ function overlayCustomFromBank(
 }
 
 function isCachedBankId(id: string): boolean {
-  return /^N[1-5]-/.test(id);
+  return /^N[1-5]-/.test(id) || /^en-cet4-/.test(id);
 }
 
 function migrateCustomWords(saved: Partial<VocabState> | undefined): Word[] {
@@ -122,27 +179,34 @@ function migrateCustomWords(saved: Partial<VocabState> | undefined): Word[] {
 }
 
 function withWords(
-  state: Pick<VocabState, "enabledLevels" | "bankByLevel" | "customWords">,
+  state: Pick<VocabState, "lang" | "enabledLevels" | "bankByLevel" | "enBank" | "customWords">,
   extra: Partial<VocabState> = {},
 ): Partial<VocabState> {
+  const lang = extra.lang ?? state.lang;
   const enabledLevels = extra.enabledLevels ?? state.enabledLevels;
   const bankByLevel = extra.bankByLevel ?? state.bankByLevel;
+  const enBank = extra.enBank ?? state.enBank;
   const customWords = extra.customWords ?? state.customWords;
   return {
     ...extra,
+    lang,
     enabledLevels,
     bankByLevel,
+    enBank,
     customWords,
-    words: collectWords(enabledLevels, bankByLevel, customWords),
+    words: collectWords(lang, enabledLevels, bankByLevel, enBank, customWords),
   };
 }
 
 export const useVocabStore = create<VocabState>()(
   persist(
     (set, get) => ({
+      lang: "ja",
+      enAccent: "en-US",
       words: [],
       customWords: [],
       bankByLevel: {},
+      enBank: [],
       enabledLevels: ["N5"],
       studyScope: "all",
       bankReady: false,
@@ -152,10 +216,40 @@ export const useVocabStore = create<VocabState>()(
       todayDate: todayKey(),
       todayCount: 0,
       lifetimeReviews: 0,
+      todayByLang: emptyTodayByLang(),
+      lifetimeByLang: emptyLifetimeByLang(),
       session: emptySession(),
+      sessionByLang: emptySessionByLang(),
       hydrated: false,
       bankVersion: "",
       setHydrated: (value) => set({ hydrated: value }),
+      setLang: async (lang) => {
+        const state = get();
+        if (state.lang === lang && state.bankReady) {
+          return;
+        }
+        writeAppLang(lang);
+        const today = currentToday(state.todayByLang[lang]);
+        const bankAlready =
+          lang === "en"
+            ? state.enBank.length > 0
+            : state.enabledLevels.every((level) => Boolean(state.bankByLevel[level]));
+        set({
+          ...withWords(state, { lang, bankReady: bankAlready }),
+          progress: readProgress(lang),
+          todayByLang: { ...state.todayByLang, [lang]: today },
+          todayDate: today.date,
+          todayCount: today.count,
+          lifetimeReviews: state.lifetimeByLang[lang] ?? 0,
+          session: state.sessionByLang[lang] ?? emptySession(),
+        });
+        await get().ensureBank();
+      },
+      setEnAccent: (accent) => {
+        writeEnAccent(accent);
+        configureEnAccent(accent);
+        set({ enAccent: accent });
+      },
       setAutoSpeak: (value) => set({ autoSpeak: value }),
       setSpeakEngine: (value) => {
         configureSpeak(value);
@@ -164,8 +258,10 @@ export const useVocabStore = create<VocabState>()(
       setEnabledLevels: async (levels) => {
         const enabledLevels = sortLevels(levels.length > 0 ? levels : ["N5"]);
         writeEnabledLevels(enabledLevels);
-        set(withWords(get(), { enabledLevels, bankReady: false }));
-        await get().ensureBank();
+        set(withWords(get(), { enabledLevels, bankReady: get().lang !== "ja" ? get().bankReady : false }));
+        if (get().lang === "ja") {
+          await get().ensureBank();
+        }
       },
       setStudyScope: (scope) => {
         writeStudyScope(scope);
@@ -180,6 +276,18 @@ export const useVocabStore = create<VocabState>()(
       },
       ensureBank: async () => {
         const state = get();
+        if (state.lang === "en") {
+          const enBank = state.enBank.length > 0 ? state.enBank : await loadEnglishLevels();
+          const customWords = overlayCustomFromBank(state.customWords, state.bankByLevel, enBank);
+          set(
+            withWords(get(), {
+              enBank,
+              customWords,
+              bankReady: true,
+            }),
+          );
+          return;
+        }
         const versionChanged = state.bankVersion !== BANK_VERSION;
         const nextBank = versionChanged ? {} : { ...state.bankByLevel };
         await Promise.all(
@@ -189,7 +297,7 @@ export const useVocabStore = create<VocabState>()(
             }
           }),
         );
-        const customWords = overlayCustomFromBank(state.customWords, nextBank);
+        const customWords = overlayCustomFromBank(state.customWords, nextBank, state.enBank);
         set(
           withWords(get(), {
             bankByLevel: nextBank,
@@ -201,19 +309,32 @@ export const useVocabStore = create<VocabState>()(
       },
       applyGrade: (wordId, grade) => {
         const state = get();
+        const lang = state.lang;
         const updated = applyGradeToProgress(state.progress[wordId], wordId, grade, Date.now());
-        const day = bumpToday(state.todayDate, state.todayCount);
+        const progress = { ...state.progress, [wordId]: updated };
+        writeProgress(lang, progress);
+        const today = currentToday(state.todayByLang[lang]);
+        const nextToday = { date: today.date, count: today.count + 1 };
+        const todayByLang = { ...state.todayByLang, [lang]: nextToday };
+        const lifetimeByLang = {
+          ...state.lifetimeByLang,
+          [lang]: (state.lifetimeByLang[lang] ?? 0) + 1,
+        };
+        const session = {
+          reviewed: state.session.reviewed + 1,
+          know: state.session.know + (grade === "know" ? 1 : 0),
+          fuzzy: state.session.fuzzy + (grade === "fuzzy" ? 1 : 0),
+          unknown: state.session.unknown + (grade === "unknown" ? 1 : 0),
+        };
         set({
-          progress: { ...state.progress, [wordId]: updated },
-          todayDate: day.todayDate,
-          todayCount: day.todayCount,
-          lifetimeReviews: state.lifetimeReviews + 1,
-          session: {
-            reviewed: state.session.reviewed + 1,
-            know: state.session.know + (grade === "know" ? 1 : 0),
-            fuzzy: state.session.fuzzy + (grade === "fuzzy" ? 1 : 0),
-            unknown: state.session.unknown + (grade === "unknown" ? 1 : 0),
-          },
+          progress,
+          todayByLang,
+          todayDate: nextToday.date,
+          todayCount: nextToday.count,
+          lifetimeByLang,
+          lifetimeReviews: lifetimeByLang[lang],
+          session,
+          sessionByLang: { ...state.sessionByLang, [lang]: session },
         });
       },
       addSentence: (wordId, sentence) => {
@@ -228,12 +349,12 @@ export const useVocabStore = create<VocabState>()(
         if (existing.includes(trimmed)) {
           return true;
         }
-        set({
-          progress: {
-            ...state.progress,
-            [wordId]: { ...current, sentences: [...existing, trimmed] },
-          },
-        });
+        const progress = {
+          ...state.progress,
+          [wordId]: { ...current, sentences: [...existing, trimmed] },
+        };
+        writeProgress(state.lang, progress);
+        set({ progress });
         return true;
       },
       pickNext: (excludeId) => {
@@ -242,64 +363,109 @@ export const useVocabStore = create<VocabState>()(
         return selectNextWord(pool, progress, excludeId);
       },
       upsertWord: (word) => {
-        const customWords = mergeWordsById(get().customWords, [word]);
-        set(withWords(get(), { customWords }));
+        const state = get();
+        const next = { ...word, lang: word.lang ?? state.lang };
+        const customWords = mergeWordsById(state.customWords, [next]);
+        set(withWords(state, { customWords }));
       },
       importData: (words, progress) => {
         const state = get();
+        const tagged = words.map((word) => ({ ...word, lang: word.lang ?? state.lang }));
+        const nextProgress = mergeProgressById(state.progress, progress);
+        writeProgress(state.lang, nextProgress);
         set({
-          ...withWords(state, { customWords: mergeWordsById(state.customWords, words) }),
-          progress: mergeProgressById(state.progress, progress),
+          ...withWords(state, { customWords: mergeWordsById(state.customWords, tagged) }),
+          progress: nextProgress,
         });
       },
-      resetSession: () => set({ session: emptySession() }),
+      resetSession: () => {
+        const state = get();
+        const session = emptySession();
+        set({
+          session,
+          sessionByLang: { ...state.sessionByLang, [state.lang]: session },
+        });
+      },
     }),
     {
       name: "jp-vocab-v1",
       skipHydration: true,
       partialize: (state) => ({
+        lang: state.lang,
+        enAccent: state.enAccent,
         customWords: state.customWords.filter((word) => !isCachedBankId(word.id)),
-        progress: state.progress,
         enabledLevels: state.enabledLevels,
         studyScope: state.studyScope,
         autoSpeak: state.autoSpeak,
         speakEngine: state.speakEngine,
-        todayDate: state.todayDate,
-        todayCount: state.todayCount,
-        lifetimeReviews: state.lifetimeReviews,
+        todayByLang: state.todayByLang,
+        lifetimeByLang: state.lifetimeByLang,
         bankVersion: state.bankVersion,
       }),
       merge: (persisted, current) => {
-        const saved = persisted as Partial<VocabState> | undefined;
+        const saved = persisted as Partial<VocabState> & { progress?: Record<string, Progress> } | undefined;
         const today = todayKey();
-        const savedDate = saved?.todayDate ?? today;
+        const lang = parseAppLang(saved?.lang ?? readAppLang());
         const enabledLevels = parseEnabledLevels(saved?.enabledLevels ?? readEnabledLevels());
         const studyScope = parseStudyScope(saved?.studyScope ?? readStudyScope());
+        const enAccent = parseEnAccent(saved?.enAccent ?? readEnAccent());
+
+        const jaStored = readProgress("ja");
+        if (Object.keys(jaStored).length === 0 && saved?.progress && Object.keys(saved.progress).length > 0) {
+          writeProgress("ja", saved.progress);
+        }
+
+        const todayByLang = saved?.todayByLang ?? emptyTodayByLang(today);
+        if (!saved?.todayByLang && typeof saved?.todayCount === "number") {
+          const savedDate = saved.todayDate ?? today;
+          todayByLang.ja = {
+            date: savedDate,
+            count: savedDate === today ? saved.todayCount : 0,
+          };
+        }
+        todayByLang.ja = currentToday(todayByLang.ja);
+        todayByLang.en = currentToday(todayByLang.en);
+
+        const lifetimeByLang = saved?.lifetimeByLang ?? emptyLifetimeByLang();
+        if (!saved?.lifetimeByLang && typeof saved?.lifetimeReviews === "number") {
+          lifetimeByLang.ja = saved.lifetimeReviews;
+        }
+
+        const bucket = todayByLang[lang];
         return {
           ...current,
           ...saved,
+          lang,
+          enAccent,
           words: [],
           customWords: migrateCustomWords(saved),
           bankByLevel: {},
+          enBank: [],
           enabledLevels,
           studyScope,
           bankReady: false,
-          progress: saved?.progress ?? {},
+          progress: readProgress(lang),
           autoSpeak: saved?.autoSpeak ?? true,
           speakEngine: saved?.speakEngine === "system" ? "system" : "neural",
-          todayDate: savedDate,
-          todayCount: savedDate === today ? (saved?.todayCount ?? 0) : 0,
-          lifetimeReviews: saved?.lifetimeReviews ?? 0,
+          todayByLang,
+          lifetimeByLang,
+          todayDate: bucket.date,
+          todayCount: bucket.count,
+          lifetimeReviews: lifetimeByLang[lang] ?? 0,
           bankVersion: typeof saved?.bankVersion === "string" ? saved.bankVersion : "",
           session: current.session,
+          sessionByLang: emptySessionByLang(),
           hydrated: current.hydrated,
         };
       },
       onRehydrateStorage: () => (state) => {
         if (state) {
+          writeAppLang(state.lang);
+          writeEnAccent(state.enAccent);
           writeEnabledLevels(state.enabledLevels);
           writeStudyScope(state.studyScope);
           configureSpeak(state.speakEngine === "system" ? "system" : "neural");
+          configureEnAccent(state.enAccent);
           state.setHydrated(true);
         }
       },

@@ -1,3 +1,5 @@
+import type { AppLang, EnAccent } from "@/lib/types";
+
 export type SpeakMode = "neural" | "system";
 
 export type VoiceOption = {
@@ -16,6 +18,7 @@ const NEURAL_VOICE_ID = "ja-JP-NanamiNeural";
 const DEFAULT_RATE = 0.92;
 
 let speakMode: SpeakMode = "neural";
+let enAccent: EnAccent = "en-US";
 let currentAudio: HTMLAudioElement | null = null;
 let objectUrl: string | null = null;
 let remoteDisabledUntil = 0;
@@ -23,6 +26,10 @@ const neuralCache = new Map<string, Blob>();
 
 export function configureSpeak(mode: SpeakMode): void {
   speakMode = mode;
+}
+
+export function configureEnAccent(accent: EnAccent): void {
+  enAccent = accent;
 }
 
 export function getSpeakMode(): SpeakMode {
@@ -68,6 +75,10 @@ export async function listVoices(): Promise<VoiceOption[]> {
 }
 
 export async function speakJa(text: string, options?: SpeakOptions): Promise<void> {
+  return speak(text, "ja", options);
+}
+
+export async function speak(text: string, lang: AppLang = "ja", options?: SpeakOptions): Promise<void> {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
     return;
@@ -79,38 +90,45 @@ export async function speakJa(text: string, options?: SpeakOptions): Promise<voi
     stopSpeak();
   }
 
+  const locale = lang === "en" ? enAccent : "ja-JP";
+
   try {
     if (speakMode === "neural") {
-      const played = await speakNeural(trimmed, rate);
+      const played = await speakNeural(trimmed, rate, lang, locale);
       if (played) {
         return;
       }
     }
-    await speakSystem(trimmed, rate, speakMode === "neural");
+    await speakSystem(trimmed, rate, speakMode === "neural", locale);
   } catch {
     try {
-      await speakSystem(trimmed, rate, false);
+      await speakSystem(trimmed, rate, false, locale);
     } catch {
       // stay quiet: no key / no network / no engine should not freeze the page
     }
   }
 }
 
-async function speakNeural(text: string, rate: number): Promise<boolean> {
+async function speakNeural(
+  text: string,
+  rate: number,
+  lang: AppLang,
+  locale: string,
+): Promise<boolean> {
   const voices = await loadSystemVoices();
-  const localNeural = pickNeuralSystemVoice(voices);
+  const localNeural = pickNeuralSystemVoice(voices, locale);
   if (localNeural && neuralScore(localNeural) >= 80) {
-    await speakWithVoice(text, rate, localNeural);
+    await speakWithVoice(text, rate, localNeural, locale);
     return true;
   }
 
-  const cacheKey = `${rate}:${text}`;
+  const cacheKey = `${lang}:${locale}:${rate}:${text}`;
   const cached = neuralCache.get(cacheKey);
   if (cached) {
     return playBlob(cached, rate);
   }
 
-  const blob = await fetchNeuralAudio(text, rate);
+  const blob = await fetchNeuralAudio(text, rate, lang, locale);
   if (!blob) {
     return false;
   }
@@ -124,7 +142,12 @@ async function speakNeural(text: string, rate: number): Promise<boolean> {
   return playBlob(blob, rate);
 }
 
-async function fetchNeuralAudio(text: string, rate: number): Promise<Blob | null> {
+async function fetchNeuralAudio(
+  text: string,
+  rate: number,
+  lang: AppLang,
+  locale: string,
+): Promise<Blob | null> {
   if (typeof window === "undefined" || !navigator.onLine || Date.now() < remoteDisabledUntil) {
     return null;
   }
@@ -135,7 +158,7 @@ async function fetchNeuralAudio(text: string, rate: number): Promise<Blob | null
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, rate }),
+      body: JSON.stringify({ text, rate, lang, accent: locale }),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -182,24 +205,32 @@ function playBlob(blob: Blob, rate: number): Promise<boolean> {
   });
 }
 
-async function speakSystem(text: string, rate: number, preferNeural: boolean): Promise<void> {
+async function speakSystem(
+  text: string,
+  rate: number,
+  preferNeural: boolean,
+  locale: string,
+): Promise<void> {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return;
   }
 
   const voices = await loadSystemVoices();
-  const voice = preferNeural ? pickNeuralSystemVoice(voices) : pickPlainSystemVoice(voices);
-  await speakWithVoice(text, rate, voice);
+  const voice = preferNeural
+    ? pickNeuralSystemVoice(voices, locale)
+    : pickPlainSystemVoice(voices, locale);
+  await speakWithVoice(text, rate, voice, locale);
 }
 
 function speakWithVoice(
   text: string,
   rate: number,
   voice: SpeechSynthesisVoice | null,
+  locale: string,
 ): Promise<void> {
   return new Promise((resolve) => {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "ja-JP";
+    utterance.lang = locale;
     utterance.rate = clamp(rate, 0.5, 1.4);
     if (voice) {
       utterance.voice = voice;
@@ -210,18 +241,31 @@ function speakWithVoice(
   });
 }
 
-function pickNeuralSystemVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  const ja = voices.filter((voice) => voice.lang.toLowerCase().startsWith("ja"));
-  const scored = ja
+function localePrefix(locale: string): string {
+  return locale.toLowerCase().startsWith("en") ? "en" : "ja";
+}
+
+function pickNeuralSystemVoice(
+  voices: SpeechSynthesisVoice[],
+  locale: string,
+): SpeechSynthesisVoice | null {
+  const prefix = localePrefix(locale);
+  const matched = voices.filter((voice) => voice.lang.toLowerCase().startsWith(prefix));
+  const scored = matched
     .map((voice) => ({ voice, score: neuralScore(voice) }))
     .sort((a, b) => b.score - a.score);
   return scored[0]?.voice ?? null;
 }
 
-function pickPlainSystemVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  const ja = voices.filter((voice) => voice.lang.toLowerCase().startsWith("ja"));
-  const exact = ja.find((voice) => voice.lang.toLowerCase() === "ja-jp");
-  return exact ?? ja[0] ?? null;
+function pickPlainSystemVoice(
+  voices: SpeechSynthesisVoice[],
+  locale: string,
+): SpeechSynthesisVoice | null {
+  const wanted = locale.toLowerCase();
+  const prefix = localePrefix(locale);
+  const matched = voices.filter((voice) => voice.lang.toLowerCase().startsWith(prefix));
+  const exact = matched.find((voice) => voice.lang.toLowerCase() === wanted);
+  return exact ?? matched[0] ?? null;
 }
 
 function neuralScore(voice: SpeechSynthesisVoice): number {

@@ -5,7 +5,7 @@ import { SiteHeader } from "@/components/SiteHeader";
 import { ratioPercents } from "@/lib/mastery";
 import { forgetScore } from "@/lib/scheduler";
 import { useVocabStore } from "@/lib/store";
-import { displayMeaning, headText, todayKey, type Word } from "@/lib/types";
+import { displayMeaning, headText, todayKey, wordLang, type Word } from "@/lib/types";
 
 function PercentRow({
   title,
@@ -50,6 +50,7 @@ export default function StatsPage() {
     state.todayDate === todayKey() ? state.todayCount : 0,
   );
   const lifetimeReviews = useVocabStore((state) => state.lifetimeReviews);
+  const lang = useVocabStore((state) => state.lang);
 
   const totals = useMemo(() => {
     return Object.values(progress).reduce(
@@ -88,6 +89,7 @@ export default function StatsPage() {
       <SiteHeader />
       <main className="mx-auto w-full max-w-lg space-y-4 px-4 pb-16">
         <h1 className="text-2xl font-semibold text-ink">统计</h1>
+        <p className="text-sm text-stone-500">当前：{lang === "en" ? "英语" : "日语"}（进度互不影响）</p>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-3xl border border-line bg-card p-5">
@@ -121,7 +123,7 @@ export default function StatsPage() {
                 }
                 return (
                   <li key={word.id} className="flex items-baseline justify-between gap-3">
-                    <span className="font-jp text-ink">
+                    <span className={wordLang(word) === "en" ? "text-ink" : "font-jp text-ink"}>
                       <span className="mr-2 text-stone-400">{index + 1}.</span>
                       {headText(word)}
                       <span className="ml-2 text-sm text-stone-500">{displayMeaning(word)}</span>

@@ -1,10 +1,12 @@
 "use client";
 
 import type { MouseEvent } from "react";
-import { speakJa } from "@/lib/speak";
+import { speak } from "@/lib/speak";
+import type { AppLang } from "@/lib/types";
 
 type SpeakButtonProps = {
   text: string;
+  lang?: AppLang;
   label?: string;
   size?: "md" | "sm";
   onUnavailable?: (message: string) => void;
@@ -12,6 +14,7 @@ type SpeakButtonProps = {
 
 export function SpeakButton({
   text,
+  lang = "ja",
   label = "朗读",
   size = "md",
   onUnavailable,
@@ -19,7 +22,7 @@ export function SpeakButton({
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
-    void speakJa(text).catch(() => {
+    void speak(text, lang).catch(() => {
       onUnavailable?.("暂时无法朗读，已尝试回退系统语音。");
     });
   }

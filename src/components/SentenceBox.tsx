@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { sentenceContainsWord } from "@/lib/parse";
-import type { Word } from "@/lib/types";
+import { wordLang, type Word } from "@/lib/types";
 
 type SentenceBoxProps = {
   word: Word;
@@ -14,13 +14,14 @@ export function SentenceBox({ word, savedCount, onSave }: SentenceBoxProps) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
+  const isEn = wordLang(word) === "en";
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const trimmed = value.trim();
     if (!sentenceContainsWord(trimmed, word)) {
       setOk(false);
-      setError("句子里需要包含这个词的汉字或假名");
+      setError(isEn ? "句子里需要包含这个单词" : "句子里需要包含这个词的汉字或假名");
       return;
     }
     onSave(trimmed);
@@ -32,7 +33,7 @@ export function SentenceBox({ word, savedCount, onSave }: SentenceBoxProps) {
   return (
     <form onSubmit={submit} className="space-y-2">
       <label htmlFor="sentence-input" className="block text-sm text-stone-500">
-        用这个词写一句日语
+        {isEn ? "用这个词写一句英语" : "用这个词写一句日语"}
         {savedCount > 0 ? <span className="ml-2 text-stone-400">已记 {savedCount} 句</span> : null}
       </label>
       <div className="flex gap-2">
@@ -44,8 +45,8 @@ export function SentenceBox({ word, savedCount, onSave }: SentenceBoxProps) {
             setError(null);
             setOk(false);
           }}
-          className="font-jp min-h-12 flex-1 rounded-2xl border border-line bg-white px-4 text-base text-ink outline-none focus:border-stone-400"
-          placeholder="例：水を飲みます。"
+          className={`${isEn ? "" : "font-jp"} min-h-12 flex-1 rounded-2xl border border-line bg-white px-4 text-base text-ink outline-none focus:border-stone-400`}
+          placeholder={isEn ? "例：Don't abandon your studies." : "例：水を飲みます。"}
           autoComplete="off"
         />
         <button

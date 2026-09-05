@@ -7,6 +7,15 @@ const VOICE = "ja-JP-NanamiNeural";
 const WIN_EPOCH = 11644473600;
 
 export async function synthesizeNanami(text: string, rate = 0.92): Promise<Buffer> {
+  return synthesizeSpeech(text, rate, VOICE, "ja-JP");
+}
+
+export async function synthesizeSpeech(
+  text: string,
+  rate = 0.92,
+  voice = VOICE,
+  xmlLang = "ja-JP",
+): Promise<Buffer> {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
     throw new Error("empty");
@@ -70,7 +79,7 @@ export async function synthesizeNanami(text: string, rate = 0.92): Promise<Buffe
       );
       ws.send(
         `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${stamp}Z\r\nPath:ssml\r\n\r\n` +
-          buildSsml(trimmed, rate),
+          buildSsml(trimmed, rate, voice, xmlLang),
       );
     });
 
@@ -116,7 +125,7 @@ function generateSecMsGec(): string {
   return createHash("sha256").update(`${ticks}${TOKEN}`).digest("hex").toUpperCase();
 }
 
-function buildSsml(text: string, rate: number): string {
+function buildSsml(text: string, rate: number, voice = VOICE, xmlLang = "ja-JP"): string {
   const percent = Math.round((rate - 1) * 100);
   const rateText = `${percent >= 0 ? "+" : ""}${percent}%`;
   const escaped = text
@@ -126,8 +135,8 @@ function buildSsml(text: string, rate: number): string {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
   return (
-    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ja-JP">` +
-    `<voice name="${VOICE}">` +
+    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${xmlLang}">` +
+    `<voice name="${voice}">` +
     `<prosody pitch="+0Hz" rate="${rateText}">${escaped}</prosody>` +
     `</voice></speak>`
   );

@@ -1,5 +1,5 @@
-import type { ExportPayload, Grade, JlptLevel, Progress, Word } from "@/lib/types";
-import { isJlptLevel } from "@/lib/types";
+import type { AppLang, ExportPayload, Grade, JlptLevel, Progress, Word } from "@/lib/types";
+import { isAppLang, isJlptLevel, wordLang } from "@/lib/types";
 import { NEW_WORD_WEIGHT } from "@/lib/scheduler";
 
 export type ImportResult = {
@@ -43,27 +43,42 @@ export function parseWord(raw: unknown): Word | null {
   }
   const record = raw as Record<string, unknown>;
   const id = asString(record.id)?.trim();
-  const kana = asString(record.kana)?.trim();
+  const english = asOptionalString(record.word);
+  const kana = asString(record.kana)?.trim() ?? "";
+  const lang: AppLang = record.lang === "en" || (english && !kana) ? "en" : "ja";
   const meaning =
-    asString(record.meaning)?.trim() || asString(record.meaningEn)?.trim() || asString(record.meaningZh)?.trim();
-  if (!id || !kana || !meaning) {
+    asString(record.meaningZh)?.trim() ||
+    asString(record.meaning)?.trim() ||
+    asString(record.meaningEn)?.trim();
+  if (!id || !meaning) {
+    return null;
+  }
+  if (lang === "ja" && !kana) {
+    return null;
+  }
+  if (lang === "en" && !english) {
     return null;
   }
 
   const jlptRaw = asOptionalString(record.jlpt);
   const jlpt: JlptLevel | undefined = jlptRaw && isJlptLevel(jlptRaw) ? jlptRaw : undefined;
   const firstEx = firstExampleEntry(record);
+  const langRaw = asOptionalString(record.lang);
 
   return {
     id,
+    lang: langRaw && isAppLang(langRaw) ? langRaw : lang,
     kanji: asString(record.kanji)?.trim() ?? "",
     kana,
+    word: english,
+    phonetic: asOptionalString(record.phonetic),
     meaning,
-    meaningEn: asOptionalString(record.meaningEn) ?? asOptionalString(record.meaning),
-    meaningZh: asOptionalString(record.meaningZh),
+    meaningEn: asOptionalString(record.meaningEn) ?? (lang === "en" ? english : asOptionalString(record.meaning)),
+    meaningZh: asOptionalString(record.meaningZh) ?? (lang === "en" ? meaning : undefined),
     romaji: asOptionalString(record.romaji),
     pos: asOptionalString(record.pos),
     jlpt,
+    level: asOptionalString(record.level),
     exampleJp: asOptionalString(record.exampleJp) ?? asOptionalString(firstEx?.ja),
     exampleEn: asOptionalString(record.exampleEn) ?? asOptionalString(firstEx?.en),
     exampleZh: asOptionalString(record.exampleZh) ?? asOptionalString(firstEx?.zh),
@@ -149,7 +164,7 @@ export function toExportPayload(words: Word[], progress: Record<string, Progress
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
-    words,
+    words: words.map((word) => ({ ...word, lang: wordLang(word) })),
     progress: Object.values(progress),
   };
 }
@@ -172,6 +187,10 @@ export function sentenceContainsWord(sentence: string, word: Word): boolean {
   const text = sentence.trim();
   if (text.length === 0) {
     return false;
+  }
+  const english = word.word?.trim();
+  if (english) {
+    return text.toLowerCase().includes(english.toLowerCase());
   }
   const kanji = word.kanji.trim();
   if (kanji && text.includes(kanji)) {
