@@ -121,15 +121,13 @@ function currentToday(bucket: TodayBucket | undefined): TodayBucket {
   return bucket;
 }
 
-function collectWords(
+function collectRelevantCustom(
   lang: AppLang,
   enabledLevels: JlptLevel[],
-  bankByLevel: Partial<Record<JlptLevel, Word[]>>,
   enabledEnLevels: EnLevel[],
-  enBankByLevel: Partial<Record<EnLevel, Word[]>>,
   customWords: Word[],
 ): Word[] {
-  const map = new Map<string, Word>();
+  const relevant: Word[] = [];
   for (const word of customWords) {
     if (wordLang(word) !== lang) {
       continue;
@@ -140,19 +138,46 @@ function collectWords(
     if (lang === "en" && word.level && isEnLevel(word.level) && !enabledEnLevels.includes(word.level)) {
       continue;
     }
+    relevant.push(word);
+  }
+  return relevant;
+}
+
+function concatLevelLists(lists: Array<Word[] | undefined>): Word[] {
+  const present = lists.filter((list): list is Word[] => Boolean(list) && list.length > 0);
+  if (present.length === 0) {
+    return [];
+  }
+  if (present.length === 1) {
+    return present[0];
+  }
+  return present.flat();
+}
+
+function collectWords(
+  lang: AppLang,
+  enabledLevels: JlptLevel[],
+  bankByLevel: Partial<Record<JlptLevel, Word[]>>,
+  enabledEnLevels: EnLevel[],
+  enBankByLevel: Partial<Record<EnLevel, Word[]>>,
+  customWords: Word[],
+): Word[] {
+  const relevant = collectRelevantCustom(lang, enabledLevels, enabledEnLevels, customWords);
+  const bankLists =
+    lang === "en"
+      ? enabledEnLevels.map((level) => enBankByLevel[level])
+      : enabledLevels.map((level) => bankByLevel[level]);
+
+  if (relevant.length === 0) {
+    return concatLevelLists(bankLists);
+  }
+
+  const map = new Map<string, Word>();
+  for (const word of relevant) {
     map.set(word.id, word);
   }
-  if (lang === "en") {
-    for (const level of enabledEnLevels) {
-      for (const word of enBankByLevel[level] ?? []) {
-        const stored = map.get(word.id);
-        map.set(word.id, stored ? overlayExampleFields(stored, word) : word);
-      }
-    }
-    return Array.from(map.values());
-  }
-  for (const level of enabledLevels) {
-    for (const word of bankByLevel[level] ?? []) {
+  for (const list of bankLists) {
+    for (const word of list ?? []) {
       const stored = map.get(word.id);
       map.set(word.id, stored ? overlayExampleFields(stored, word) : word);
     }
@@ -160,23 +185,29 @@ function collectWords(
   return Array.from(map.values());
 }
 
-function flattenEnBank(enBankByLevel: Partial<Record<EnLevel, Word[]>>): Word[] {
-  return Object.values(enBankByLevel).flatMap((list) => list ?? []);
-}
-
 function overlayCustomFromBank(
   customWords: Word[],
   bankByLevel: Partial<Record<JlptLevel, Word[]>>,
   enBankByLevel: Partial<Record<EnLevel, Word[]>>,
 ): Word[] {
+  if (customWords.length === 0 || !customWords.some((word) => isCachedBankId(word.id))) {
+    return customWords;
+  }
+  const needed = new Set(customWords.map((word) => word.id).filter(isCachedBankId));
   const byId = new Map<string, Word>();
   for (const list of Object.values(bankByLevel)) {
     for (const word of list ?? []) {
-      byId.set(word.id, word);
+      if (needed.has(word.id)) {
+        byId.set(word.id, word);
+      }
     }
   }
-  for (const word of flattenEnBank(enBankByLevel)) {
-    byId.set(word.id, word);
+  for (const list of Object.values(enBankByLevel)) {
+    for (const word of list ?? []) {
+      if (needed.has(word.id)) {
+        byId.set(word.id, word);
+      }
+    }
   }
   if (byId.size === 0) {
     return customWords;
@@ -209,7 +240,6 @@ function withWords(
   const bankByLevel = extra.bankByLevel ?? state.bankByLevel;
   const enBankByLevel = extra.enBankByLevel ?? state.enBankByLevel;
   const customWords = extra.customWords ?? state.customWords;
-  const enBank = flattenEnBank(enBankByLevel);
   return {
     ...extra,
     lang,
@@ -217,7 +247,6 @@ function withWords(
     enabledEnLevels,
     bankByLevel,
     enBankByLevel,
-    enBank,
     customWords,
     words: collectWords(lang, enabledLevels, bankByLevel, enabledEnLevels, enBankByLevel, customWords),
   };

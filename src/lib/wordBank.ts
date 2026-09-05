@@ -17,14 +17,21 @@ export async function loadEnglishWords(levels: EnLevel[]): Promise<Word[]> {
   const groups = await Promise.all(
     wanted.map(async (level) => {
       const raw = await importEnglishLevel(level);
-      return parseWordList(raw).words.map((word) => ({
+      const parsed = parseWordList(raw).words;
+      const needsTag = parsed.some(
+        (word) => word.lang !== "en" || !isEnLevel(word.level ?? "") || word.level !== level,
+      );
+      if (!needsTag) {
+        return parsed;
+      }
+      return parsed.map((word) => ({
         ...word,
         lang: "en" as const,
         level: isEnLevel(word.level ?? "") ? word.level : level,
       }));
     }),
   );
-  return groups.flat();
+  return groups.length === 1 ? groups[0] : groups.flat();
 }
 
 export async function loadEnglishLevels(): Promise<Word[]> {

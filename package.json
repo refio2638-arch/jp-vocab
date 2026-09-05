@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "import:jlpt": "node scripts/import-openjlpt.mjs",
+    "import:en": "node scripts/build-en-wordlists.mjs",
     "fill:zh": "node scripts/fill-zh.mjs",
     "fill:example-zh": "node scripts/fill-example-zh.mjs"
   },

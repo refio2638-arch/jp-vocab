@@ -78,15 +78,14 @@ export function selectNextWord(
     return null;
   }
 
-  const candidates =
-    excludeId && words.length > 1
-      ? words.filter((word) => word.id !== excludeId)
-      : words;
-
   let best: Word | null = null;
   let bestScore = -Infinity;
+  const skipId = excludeId && words.length > 1 ? excludeId : null;
 
-  for (const word of candidates) {
+  for (const word of words) {
+    if (skipId && word.id === skipId) {
+      continue;
+    }
     const score = scoreWord(progress[word.id], now, random);
     if (score > bestScore) {
       bestScore = score;

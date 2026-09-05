@@ -18,7 +18,12 @@ export default function HomePage() {
   const setLang = useVocabStore((state) => state.setLang);
   const todayByLang = useVocabStore((state) => state.todayByLang);
   const enabledLevels = useVocabStore((state) => state.enabledLevels);
+  const enabledEnLevels = useVocabStore((state) => state.enabledEnLevels);
+  const enBankByLevel = useVocabStore((state) => state.enBankByLevel);
   const lifetimeByLang = useVocabStore((state) => state.lifetimeByLang);
+  const enCount = (level: "CET4" | "CET6" | "KAOYAN") =>
+    enBankByLevel[level]?.length ?? EN_LEVEL_COUNTS[level];
+  const enEnabledCount = enabledEnLevels.reduce((sum, level) => sum + enCount(level), 0);
   const enabledCount = enabledBankCount(enabledLevels);
   const total = totalBankCount();
   const today = todayKey();
@@ -66,8 +71,8 @@ export default function HomePage() {
             <p className="mt-2 text-sm text-stone-500">今日已刷</p>
             <p className="mt-1 text-4xl font-semibold tabular-nums text-ink">{enToday}</p>
             <p className="mt-2 text-xs text-stone-400">
-              CET4 {EN_LEVEL_COUNTS.CET4} · CET6 {EN_LEVEL_COUNTS.CET6} · 考研 {EN_LEVEL_COUNTS.KAOYAN} ·
-              累计 {lifetimeByLang.en} 次
+              当前 {enEnabledCount} 词 · CET4 {enCount("CET4")} · CET6 {enCount("CET6")} · 考研{" "}
+              {enCount("KAOYAN")} · 累计 {lifetimeByLang.en} 次
             </p>
           </button>
         </div>

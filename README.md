@@ -22,6 +22,12 @@ node scripts/fill-zh.mjs --level N4
 
 中文释义优先从开源日中词库 [Japanese-Chinese-thesaurus](https://github.com/lxl66566/Japanese-Chinese-thesaurus)（Unlicense）按汉字/假名合并；对不上的词仍显示英文。例句中文需要 `DEEPSEEK_API_KEY` 再跑 `fill-zh` 补全。已有非空 `meaningZh` 不会被覆盖。
 
+英语 CET4 / CET6 / 考研词表从 `scripts/raw/en/` 的 CSV 或 JSON 转换（表头见 `scripts/en-wordlist.example.csv`）：
+
+```bash
+npm run import:en
+```
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

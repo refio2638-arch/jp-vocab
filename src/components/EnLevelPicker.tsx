@@ -7,7 +7,12 @@ import { EN_LEVEL_LABELS, EN_LEVELS, type EnLevel } from "@/lib/types";
 export function EnLevelPicker() {
   const enabledEnLevels = useVocabStore((state) => state.enabledEnLevels);
   const toggleEnLevel = useVocabStore((state) => state.toggleEnLevel);
+  const enBankByLevel = useVocabStore((state) => state.enBankByLevel);
   const wordCount = useVocabStore((state) => state.words.length);
+
+  function levelCount(level: EnLevel) {
+    return enBankByLevel[level]?.length ?? EN_LEVEL_COUNTS[level];
+  }
 
   return (
     <section>
@@ -28,7 +33,7 @@ export function EnLevelPicker() {
               }`}
             >
               {EN_LEVEL_LABELS[level]}
-              <span className="ml-1 opacity-70">{EN_LEVEL_COUNTS[level]}</span>
+              <span className="ml-1 opacity-70">{levelCount(level)}</span>
             </button>
           );
         })}
