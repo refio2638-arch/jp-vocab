@@ -2,37 +2,18 @@
  * Convert local English word lists into src/data/en/{cet4,cet6,kaoyan}.json
  *
  * Usage:
- *   node scripts/build-en-wordlists.mjs
+ *   npm run import:en
  *
- * Put source files here (any one per level is enough):
- *   scripts/raw/en/cet4.csv
- *   scripts/raw/en/cet6.csv
- *   scripts/raw/en/kaoyan.csv
- *   or the same names with .tsv / .json
+ * Inputs:
+ *   scripts/raw/en/cet4.json   KyleBing: { word, translations: [{ translation, type }] }
+ *   scripts/raw/en/cet6.txt    word<TAB>中文释义
+ *   scripts/raw/en/kaoyan.txt  word<TAB>中文释义
  *
- * Required CSV header (first row). Extra columns are ignored.
- *   word,meaningZh
+ * meaningZh is built from translations (type + translation) or the txt second column.
+ * Empty lines are skipped. Same word in one level is kept once.
+ *   node scripts/build-en-wordlists.mjs --only=cet4
  *
- * Recommended CSV header:
- *   word,meaningZh,phonetic,meaningEn,exampleEn,exampleZh
- *
- * Column aliases (case-insensitive):
- *   word       = word | headword | lemma | spelling | 单词 | 词汇 | 英文
- *   meaningZh  = meaningZh | meaning | zh | translation | 中文 | 释义 | 中文释义
- *   phonetic   = phonetic | ipa | uk | us | 音标
- *   meaningEn  = meaningEn | en | definition | 英文释义
- *   exampleEn  = exampleEn | example | sentence | 例句
- *   exampleZh  = exampleZh | example_zh | sentenceZh | 例句中文
- *
- * JSON: an array of objects, or { words | vocab | items | data: [...] }
- * with the same field names / aliases.
- *
- * Rules:
- *   - meaningZh is required; rows without Chinese are skipped
- *     (pass --keep-en-only to keep them, using meaningEn and notes:"missing-zh")
- *   - same word in one level is kept once
- *   - examples are copied as-is; empty is fine; nothing is invented
- *   - id = en-{cet4|cet6|kaoyan}-{lowercase word, non-letters stripped}
+ * id = en-{cet4|cet6|kaoyan}-{lowercase word, non-letters/digits stripped}
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -44,42 +25,10 @@ const RAW_DIR = join(ROOT, "scripts", "raw", "en");
 const OUT_DIR = join(ROOT, "src", "data", "en");
 
 const LEVELS = [
-  { level: "CET4", prefix: "cet4", stems: ["cet4", "cet-4", "四级"] },
-  { level: "CET6", prefix: "cet6", stems: ["cet6", "cet-6", "六级"] },
-  { level: "KAOYAN", prefix: "kaoyan", stems: ["kaoyan", "ky", "postgraduate", "考研"] },
+  { level: "CET4", prefix: "cet4", stems: ["cet4", "cet-4"] },
+  { level: "CET6", prefix: "cet6", stems: ["cet6", "cet-6"] },
+  { level: "KAOYAN", prefix: "kaoyan", stems: ["kaoyan"] },
 ];
-
-const FIELD_ALIASES = {
-  word: ["word", "headword", "lemma", "spelling", "单词", "词汇", "英文", "english"],
-  meaningZh: ["meaningzh", "meaning", "zh", "translation", "中文", "释义", "中文释义", "meaning_zh", "cn"],
-  phonetic: ["phonetic", "ipa", "uk", "us", "音标", "phonetics"],
-  meaningEn: ["meaningen", "en", "definition", "英文释义", "meaning_en", "englishmeaning"],
-  exampleEn: ["exampleen", "example", "sentence", "例句", "example_en", "sentenceen"],
-  exampleZh: ["examplezh", "example_zh", "sentencezh", "例句中文", "sentence_zh"],
-};
-
-const keepEnOnly = process.argv.includes("--keep-en-only");
-const syncCountsOnly = process.argv.includes("--sync-counts");
-
-function normalizeKey(value) {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_\-]/g, "");
-}
-
-function pickField(record, field) {
-  const aliases = FIELD_ALIASES[field];
-  for (const [key, value] of Object.entries(record)) {
-    if (aliases.includes(normalizeKey(key))) {
-      const text = String(value ?? "").trim();
-      if (text) {
-        return text;
-      }
-    }
-  }
-  return "";
-}
 
 function hasChinese(value) {
   return /[\u4e00-\u9fff]/.test(value);
@@ -89,72 +38,31 @@ function slugWord(word) {
   return word.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
-function parseCsv(text) {
-  const rows = [];
-  let cell = "";
-  let row = [];
-  let inQuotes = false;
-  const pushCell = () => {
-    row.push(cell);
-    cell = "";
-  };
-  const pushRow = () => {
-    if (row.length > 1 || (row.length === 1 && row[0].trim())) {
-      rows.push(row);
-    }
-    row = [];
-  };
-
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          cell += '"';
-          i += 1;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        cell += ch;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inQuotes = true;
-      continue;
-    }
-    if (ch === "," || ch === "\t") {
-      pushCell();
-      continue;
-    }
-    if (ch === "\n") {
-      pushCell();
-      pushRow();
-      continue;
-    }
-    if (ch === "\r") {
-      continue;
-    }
-    cell += ch;
+function meaningFromTranslations(translations) {
+  if (!Array.isArray(translations)) {
+    return "";
   }
-  pushCell();
-  pushRow();
-  return rows;
+  const parts = [];
+  for (const item of translations) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const text = String(item.translation ?? "").trim().replace(/[；;]+$/g, "");
+    if (!text) {
+      continue;
+    }
+    const type = String(item.type ?? "").trim();
+    parts.push(type ? `${type}. ${text}` : text);
+  }
+  return parts.join("；");
 }
 
-function rowsToRecords(rows) {
-  if (rows.length === 0) {
-    return [];
+function meaningFromRecord(record) {
+  const direct = String(record.meaningZh ?? "").trim();
+  if (direct) {
+    return direct;
   }
-  const headers = rows[0].map((item) => item.trim());
-  return rows.slice(1).map((cols) => {
-    const record = {};
-    headers.forEach((header, index) => {
-      record[header] = cols[index] ?? "";
-    });
-    return record;
-  });
+  return meaningFromTranslations(record.translations);
 }
 
 function asRecordList(raw) {
@@ -176,7 +84,7 @@ function findSourceFile(stems) {
     return null;
   }
   const files = readdirSync(RAW_DIR);
-  const exts = [".csv", ".tsv", ".json"];
+  const exts = [".json", ".txt", ".tsv", ".csv"];
   for (const stem of stems) {
     for (const ext of exts) {
       const exact = files.find((name) => name.toLowerCase() === `${stem}${ext}`);
@@ -185,18 +93,27 @@ function findSourceFile(stems) {
       }
     }
   }
-  return files.find((name) => {
-    const lower = name.toLowerCase();
-    return stems.some((stem) => lower.startsWith(stem) && exts.some((ext) => lower.endsWith(ext)));
-  })
-    ? join(
-        RAW_DIR,
-        files.find((name) => {
-          const lower = name.toLowerCase();
-          return stems.some((stem) => lower.startsWith(stem) && exts.some((ext) => lower.endsWith(ext)));
-        }),
-      )
-    : null;
+  return null;
+}
+
+function loadTxtRecords(text) {
+  const records = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    const tab = line.indexOf("\t");
+    if (tab === -1) {
+      continue;
+    }
+    const word = line.slice(0, tab).trim();
+    const meaningZh = line.slice(tab + 1).trim();
+    if (!word || !meaningZh) {
+      continue;
+    }
+    records.push({ word, meaningZh });
+  }
+  return records;
 }
 
 function loadRecords(filePath) {
@@ -204,7 +121,7 @@ function loadRecords(filePath) {
   if (filePath.toLowerCase().endsWith(".json")) {
     return asRecordList(JSON.parse(text));
   }
-  return rowsToRecords(parseCsv(text));
+  return loadTxtRecords(text);
 }
 
 function convertLevel(level, prefix, records) {
@@ -213,14 +130,9 @@ function convertLevel(level, prefix, records) {
   let skippedNoWord = 0;
   let skippedNoZh = 0;
   let skippedDup = 0;
-  let keptEnOnly = 0;
 
   for (const record of records) {
-    const word = pickField(record, "word");
-    if (!word) {
-      skippedNoWord += 1;
-      continue;
-    }
+    const word = String(record.word ?? "").trim();
     const slug = slugWord(word);
     if (!slug) {
       skippedNoWord += 1;
@@ -230,52 +142,23 @@ function convertLevel(level, prefix, records) {
       skippedDup += 1;
       continue;
     }
-
-    const meaningZhRaw = pickField(record, "meaningZh");
-    const meaningEn = pickField(record, "meaningEn");
-    let meaningZh = meaningZhRaw;
-    let notes;
+    const meaningZh = meaningFromRecord(record);
     if (!hasChinese(meaningZh)) {
-      if (keepEnOnly && meaningEn) {
-        meaningZh = meaningEn;
-        notes = "missing-zh";
-        keptEnOnly += 1;
-      } else {
-        skippedNoZh += 1;
-        continue;
-      }
+      skippedNoZh += 1;
+      continue;
     }
 
     seen.add(slug);
-    const item = {
+    words.push({
       id: `en-${prefix}-${slug}`,
       lang: "en",
       word,
       meaningZh,
       level,
-    };
-    const phonetic = pickField(record, "phonetic");
-    const exampleEn = pickField(record, "exampleEn");
-    const exampleZh = pickField(record, "exampleZh");
-    if (phonetic) {
-      item.phonetic = phonetic;
-    }
-    if (meaningEn) {
-      item.meaningEn = meaningEn;
-    }
-    if (exampleEn) {
-      item.exampleEn = exampleEn;
-    }
-    if (exampleZh) {
-      item.exampleZh = exampleZh;
-    }
-    if (notes) {
-      item.notes = notes;
-    }
-    words.push(item);
+    });
   }
 
-  return { words, skippedNoWord, skippedNoZh, skippedDup, keptEnOnly };
+  return { words, skippedNoWord, skippedNoZh, skippedDup };
 }
 
 function writeCounts(counts) {
@@ -292,28 +175,18 @@ function writeCounts(counts) {
 
 function printHelp() {
   console.log(`
-未找到 scripts/raw/en/ 下的原始词表，现有小词库不会被覆盖。
+未找到 scripts/raw/en/ 下的词表。请放入：
+  scripts/raw/en/cet4.txt
+  scripts/raw/en/cet6.txt
+  scripts/raw/en/kaoyan.txt
 
-请下载带中文释义的完整表，放到：
-  scripts/raw/en/cet4.csv
-  scripts/raw/en/cet6.csv
-  scripts/raw/en/kaoyan.csv
-（.tsv / .json 也可以）
-
-CSV 第一行必须是表头，至少包含：
-  word,meaningZh
-
-推荐表头：
-  word,meaningZh,phonetic,meaningEn,exampleEn,exampleZh
-
-示例：
-  word,meaningZh,phonetic,meaningEn,exampleEn,exampleZh
-  abandon,放弃；抛弃,/əˈbændən/,to give up completely,,
-
-没有例句就留空，不要填假句子。然后运行：
-  npm run import:en
+每行格式：word<TAB>中文释义（可含词性）
+空行跳过。然后运行 npm run import:en
 `);
 }
+
+const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
+const onlyPrefix = onlyArg ? onlyArg.slice("--only=".length).toLowerCase() : "";
 
 const counts = { CET4: 0, CET6: 0, KAOYAN: 0 };
 let converted = 0;
@@ -321,6 +194,9 @@ let converted = 0;
 mkdirSync(OUT_DIR, { recursive: true });
 
 for (const item of LEVELS) {
+  if (onlyPrefix && item.prefix !== onlyPrefix) {
+    continue;
+  }
   const source = findSourceFile(item.stems);
   if (!source) {
     continue;
@@ -332,34 +208,31 @@ for (const item of LEVELS) {
   converted += 1;
   console.log(
     `${item.level}: ${result.words.length} 词 ← ${source}` +
-      `  (跳过无词 ${result.skippedNoWord}，无中文 ${result.skippedNoZh}，重复 ${result.skippedDup}` +
-      `${result.keptEnOnly ? `，仅英文 ${result.keptEnOnly}` : ""})`,
+      `  (跳过无词 ${result.skippedNoWord}，无中文 ${result.skippedNoZh}，重复 ${result.skippedDup})`,
   );
 }
 
-function readExistingCounts() {
-  for (const item of LEVELS) {
-    if (counts[item.level] > 0) {
-      continue;
-    }
-    const existing = join(OUT_DIR, `${item.prefix}.json`);
-    if (existsSync(existing)) {
-      counts[item.level] = asRecordList(JSON.parse(readFileSync(existing, "utf8"))).length;
-    }
-  }
-}
-
 if (converted === 0) {
-  if (syncCountsOnly) {
-    readExistingCounts();
-    writeCounts(counts);
-    console.log(`已同步 src/data/en/counts.ts → CET4 ${counts.CET4} / CET6 ${counts.CET6} / 考研 ${counts.KAOYAN}`);
-    process.exit(0);
-  }
   printHelp();
   process.exit(1);
 }
 
-readExistingCounts();
+for (const item of LEVELS) {
+  if (counts[item.level] > 0) {
+    continue;
+  }
+  const existing = join(OUT_DIR, `${item.prefix}.json`);
+  if (existsSync(existing)) {
+    const list = JSON.parse(readFileSync(existing, "utf8"));
+    counts[item.level] = Array.isArray(list) ? list.length : 0;
+  }
+}
+
 writeCounts(counts);
 console.log(`已更新 src/data/en/counts.ts → CET4 ${counts.CET4} / CET6 ${counts.CET6} / 考研 ${counts.KAOYAN}`);
+
+for (const item of LEVELS) {
+  const out = join(OUT_DIR, `${item.prefix}.json`);
+  const list = JSON.parse(readFileSync(out, "utf8"));
+  console.log(`${item.prefix}.json length ${Array.isArray(list) ? list.length : "NOT_ARRAY"}`);
+}

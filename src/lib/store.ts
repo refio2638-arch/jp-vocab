@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { EN_BANK_VERSION } from "@/data/en";
 import { BANK_VERSION } from "@/data/jlpt";
 import {
   parseAppLang,
@@ -72,6 +73,7 @@ export type VocabState = {
   sessionByLang: Record<AppLang, SessionStats>;
   hydrated: boolean;
   bankVersion: string;
+  enBankVersion: string;
   setHydrated: (value: boolean) => void;
   setLang: (lang: AppLang) => Promise<void>;
   setEnAccent: (accent: EnAccent) => void;
@@ -144,12 +146,12 @@ function collectRelevantCustom(
 }
 
 function concatLevelLists(lists: Array<Word[] | undefined>): Word[] {
-  const present = lists.filter((list): list is Word[] => Boolean(list) && list.length > 0);
+  const present = lists.filter((list): list is Word[] => Array.isArray(list) && list.length > 0);
   if (present.length === 0) {
     return [];
   }
   if (present.length === 1) {
-    return present[0];
+    return present[0] ?? [];
   }
   return present.flat();
 }
@@ -278,6 +280,7 @@ export const useVocabStore = create<VocabState>()(
       sessionByLang: emptySessionByLang(),
       hydrated: false,
       bankVersion: "",
+      enBankVersion: "",
       setHydrated: (value) => set({ hydrated: value }),
       setLang: async (lang) => {
         const state = get();
@@ -349,7 +352,8 @@ export const useVocabStore = create<VocabState>()(
       ensureBank: async () => {
         const state = get();
         if (state.lang === "en") {
-          const enBankByLevel = { ...state.enBankByLevel };
+          const versionChanged = state.enBankVersion !== EN_BANK_VERSION;
+          const enBankByLevel = versionChanged ? {} : { ...state.enBankByLevel };
           await Promise.all(
             state.enabledEnLevels.map(async (level) => {
               if (!enBankByLevel[level]) {
@@ -363,6 +367,7 @@ export const useVocabStore = create<VocabState>()(
               enBankByLevel,
               customWords,
               bankReady: true,
+              enBankVersion: EN_BANK_VERSION,
             }),
           );
           return;
@@ -481,6 +486,7 @@ export const useVocabStore = create<VocabState>()(
         todayByLang: state.todayByLang,
         lifetimeByLang: state.lifetimeByLang,
         bankVersion: state.bankVersion,
+        enBankVersion: state.enBankVersion,
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<VocabState> & { progress?: Record<string, Progress> } | undefined;
@@ -523,6 +529,7 @@ export const useVocabStore = create<VocabState>()(
           bankByLevel: {},
           enBank: [],
           enBankByLevel: {},
+          enBankVersion: typeof saved?.enBankVersion === "string" ? saved.enBankVersion : "",
           enabledLevels,
           enabledEnLevels,
           studyScope,
