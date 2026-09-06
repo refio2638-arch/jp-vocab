@@ -1,6 +1,8 @@
 export const EN_LEVELS = ["CET4", "CET6", "KAOYAN"] as const;
 export type EnBankLevel = (typeof EN_LEVELS)[number];
 
+export const EN_BANK_VERSION = "raw-txt-1";
+
 export { EN_LEVEL_COUNTS } from "./counts";
 
 export async function importEnglishLevel(level: EnBankLevel) {
